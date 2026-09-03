@@ -3,1010 +3,954 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-    page_title="Forex AI Analyst V2",
-    page_icon="📈",
+    page_title="Forex AI Analyst",
+    page_icon="📊",
     layout="wide"
 )
+
 
 # ============================================================
 # STYLE
 # ============================================================
 
-st.markdown("""
-<style>
-.main {
-    padding-top: 1rem;
-}
+st.markdown(
+    """
+    <style>
+    .main-title {
+        font-size: 42px;
+        font-weight: 800;
+        margin-bottom: 0;
+    }
 
-.title {
-    font-size: 2.5rem;
-    font-weight: 800;
-}
+    .subtitle {
+        font-size: 18px;
+        opacity: 0.75;
+        margin-bottom: 25px;
+    }
 
-.subtitle {
-    color: #777;
-    margin-bottom: 25px;
-}
+    .signal-buy {
+        padding: 18px;
+        border-radius: 12px;
+        background-color: rgba(0, 180, 80, 0.15);
+        border: 1px solid rgba(0, 180, 80, 0.45);
+        text-align: center;
+        font-size: 28px;
+        font-weight: 800;
+    }
 
-.signal-buy {
-    padding: 18px;
-    border-radius: 12px;
-    background-color: #d9f7e3;
-    border: 1px solid #55b978;
-    text-align: center;
-    font-size: 30px;
-    font-weight: 800;
-}
+    .signal-sell {
+        padding: 18px;
+        border-radius: 12px;
+        background-color: rgba(220, 50, 50, 0.15);
+        border: 1px solid rgba(220, 50, 50, 0.45);
+        text-align: center;
+        font-size: 28px;
+        font-weight: 800;
+    }
 
-.signal-sell {
-    padding: 18px;
-    border-radius: 12px;
-    background-color: #ffe0e0;
-    border: 1px solid #d85c5c;
-    text-align: center;
-    font-size: 30px;
-    font-weight: 800;
-}
+    .signal-wait {
+        padding: 18px;
+        border-radius: 12px;
+        background-color: rgba(240, 170, 0, 0.15);
+        border: 1px solid rgba(240, 170, 0, 0.45);
+        text-align: center;
+        font-size: 28px;
+        font-weight: 800;
+    }
 
-.signal-wait {
-    padding: 18px;
-    border-radius: 12px;
-    background-color: #fff1cc;
-    border: 1px solid #d6a83d;
-    text-align: center;
-    font-size: 30px;
-    font-weight: 800;
-}
+    .signal-none {
+        padding: 18px;
+        border-radius: 12px;
+        background-color: rgba(150, 150, 150, 0.15);
+        border: 1px solid rgba(150, 150, 150, 0.45);
+        text-align: center;
+        font-size: 28px;
+        font-weight: 800;
+    }
 
-.signal-none {
-    padding: 18px;
-    border-radius: 12px;
-    background-color: #eeeeee;
-    border: 1px solid #999999;
-    text-align: center;
-    font-size: 30px;
-    font-weight: 800;
-}
-</style>
-""", unsafe_allow_html=True)
+    .info-box {
+        padding: 15px;
+        border-radius: 10px;
+        background-color: rgba(100, 100, 100, 0.08);
+        margin-bottom: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # ============================================================
 # TITRE
 # ============================================================
 
 st.markdown(
-    '<div class="title">📈 Forex AI Analyst V2</div>',
+    '<div class="main-title">📊 Forex AI Analyst</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
-    '<div class="subtitle">'
-    'Analyse technique multi-timeframe avec confluence'
-    '</div>',
+    '<div class="subtitle">Analyse technique multi-timeframe • Aucun ordre automatique</div>',
     unsafe_allow_html=True
 )
+
 
 # ============================================================
 # PARAMÈTRES
 # ============================================================
 
-col1, col2 = st.columns(2)
-
-with col1:
-    asset = st.selectbox(
-        "Instrument",
-        ["EUR/USD", "XAU/USD"]
-    )
-
-with col2:
-    chart_tf = st.selectbox(
-        "Timeframe du graphique",
-        ["D1", "H4", "H1", "M15", "M5"]
-    )
-
-# ============================================================
-# TICKERS
-# ============================================================
-
-ticker_map = {
+INSTRUMENTS = {
     "EUR/USD": "EURUSD=X",
     "XAU/USD": "XAUUSD=X"
 }
 
-ticker = ticker_map[asset]
-
-# ============================================================
-# PARAMÈTRES DES TIMEFRAMES
-# ============================================================
-
 TIMEFRAMES = {
     "D1": {
         "interval": "1d",
-        "period": "1y"
+        "period": "1y",
+        "weight": 3
     },
     "H4": {
         "interval": "1h",
-        "period": "3mo"
+        "period": "3mo",
+        "weight": 3
     },
     "H1": {
         "interval": "1h",
-        "period": "3mo"
+        "period": "3mo",
+        "weight": 2
     },
     "M15": {
         "interval": "15m",
-        "period": "1mo"
+        "period": "1mo",
+        "weight": 1
     },
     "M5": {
         "interval": "5m",
-        "period": "5d"
+        "period": "5d",
+        "weight": 1
     }
 }
+
+
+# ============================================================
+# FONCTIONS UTILITAIRES
+# ============================================================
+
+def clean_dataframe(df):
+    """Nettoie les données Yahoo Finance."""
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # Gestion des colonnes MultiIndex
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    required = ["Open", "High", "Low", "Close"]
+
+    for column in required:
+        if column not in df.columns:
+            return pd.DataFrame()
+
+    if "Volume" not in df.columns:
+        df["Volume"] = 0
+
+    df = df[["Open", "High", "Low", "Close", "Volume"]]
+
+    df = df.dropna()
+
+    return df
+
+
+def download_data(ticker, interval, period):
+    """Télécharge les données depuis Yahoo Finance."""
+
+    try:
+        data = yf.download(
+            ticker,
+            interval=interval,
+            period=period,
+            progress=False,
+            auto_adjust=False
+        )
+
+        return clean_dataframe(data)
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def resample_h4(df):
+    """Transforme les bougies H1 en bougies H4."""
+
+    if df.empty:
+        return df
+
+    data = df.copy()
+
+    # Retirer timezone pour faciliter le resampling
+    try:
+        if getattr(data.index, "tz", None) is not None:
+            data.index = data.index.tz_localize(None)
+    except Exception:
+        pass
+
+    h4 = data.resample("4h", label="right", closed="right").agg(
+        {
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum"
+        }
+    )
+
+    h4 = h4.dropna()
+
+    return h4
+
 
 # ============================================================
 # INDICATEURS
 # ============================================================
 
-def calculate_rsi(series, period=14):
+def ema(series, period):
+    return series.ewm(
+        span=period,
+        adjust=False,
+        min_periods=period
+    ).mean()
 
-    delta = series.diff()
+
+def sma(series, period):
+    return series.rolling(
+        window=period,
+        min_periods=period
+    ).mean()
+
+
+def calculate_rsi(close, period=14):
+    delta = close.diff()
 
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+    avg_gain = gain.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi
 
 
-def calculate_macd(series):
+def calculate_macd(close):
+    fast = ema(close, 12)
+    slow = ema(close, 26)
 
-    ema12 = series.ewm(
-        span=12,
-        adjust=False
-    ).mean()
-
-    ema26 = series.ewm(
-        span=26,
-        adjust=False
-    ).mean()
-
-    macd = ema12 - ema26
-
-    signal = macd.ewm(
-        span=9,
-        adjust=False
-    ).mean()
+    macd = fast - slow
+    signal = ema(macd, 9)
 
     histogram = macd - signal
 
     return macd, signal, histogram
 
 
-def calculate_atr(data, period=14):
+def calculate_atr(df, period=14):
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
 
-    high_low = data["High"] - data["Low"]
+    previous_close = close.shift(1)
 
-    high_close = (
-        data["High"] -
-        data["Close"].shift()
-    ).abs()
-
-    low_close = (
-        data["Low"] -
-        data["Close"].shift()
-    ).abs()
+    tr1 = high - low
+    tr2 = (high - previous_close).abs()
+    tr3 = (low - previous_close).abs()
 
     true_range = pd.concat(
-        [
-            high_low,
-            high_close,
-            low_close
-        ],
+        [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
-    return true_range.rolling(period).mean()
+    atr = true_range.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
+
+    return atr
 
 
-def calculate_adx(data, period=14):
-
-    high = data["High"]
-    low = data["Low"]
-    close = data["Close"]
+def calculate_adx(df, period=14):
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
 
     up_move = high.diff()
     down_move = -low.diff()
 
-    plus_dm = np.where(
-        (up_move > down_move) & (up_move > 0),
-        up_move,
-        0
+    plus_dm = pd.Series(
+        np.where(
+            (up_move > down_move) & (up_move > 0),
+            up_move,
+            0
+        ),
+        index=df.index
     )
 
-    minus_dm = np.where(
-        (down_move > up_move) & (down_move > 0),
-        down_move,
-        0
+    minus_dm = pd.Series(
+        np.where(
+            (down_move > up_move) & (down_move > 0),
+            down_move,
+            0
+        ),
+        index=df.index
     )
+
+    previous_close = close.shift(1)
 
     tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
+    tr2 = (high - previous_close).abs()
+    tr3 = (low - previous_close).abs()
 
     tr = pd.concat(
         [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
-    atr = tr.rolling(period).mean()
+    atr = tr.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
 
     plus_di = (
-        100 *
-        pd.Series(plus_dm, index=data.index)
-        .rolling(period).mean() /
-        atr
+        100
+        * plus_dm.ewm(
+            alpha=1 / period,
+            adjust=False,
+            min_periods=period
+        ).mean()
+        / atr
     )
 
     minus_di = (
-        100 *
-        pd.Series(minus_dm, index=data.index)
-        .rolling(period).mean() /
-        atr
+        100
+        * minus_dm.ewm(
+            alpha=1 / period,
+            adjust=False,
+            min_periods=period
+        ).mean()
+        / atr
     )
+
+    denominator = (plus_di + minus_di).replace(0, np.nan)
 
     dx = (
-        100 *
-        (plus_di - minus_di).abs() /
-        (plus_di + minus_di).replace(0, np.nan)
+        100
+        * (plus_di - minus_di).abs()
+        / denominator
     )
 
-    adx = dx.rolling(period).mean()
-
-    return adx
-
-
-def calculate_indicators(data):
-
-    data = data.copy()
-
-    data["EMA20"] = data["Close"].ewm(
-        span=20,
-        adjust=False
+    adx = dx.ewm(
+        alpha=1 / period,
+        adjust=False,
+        min_periods=period
     ).mean()
 
-    data["EMA50"] = data["Close"].ewm(
-        span=50,
-        adjust=False
+    return adx, plus_di, minus_di
+
+
+def calculate_bollinger(close, period=20, std_multiplier=2):
+    middle = close.rolling(
+        period,
+        min_periods=period
     ).mean()
 
-    data["SMA200"] = data["Close"].rolling(200).mean()
+    std = close.rolling(
+        period,
+        min_periods=period
+    ).std()
 
-    data["RSI"] = calculate_rsi(
-        data["Close"]
+    upper = middle + std_multiplier * std
+    lower = middle - std_multiplier * std
+
+    return middle, upper, lower
+
+
+def calculate_stochastic(df, period=14, smooth=3):
+    lowest_low = df["Low"].rolling(
+        period,
+        min_periods=period
+    ).min()
+
+    highest_high = df["High"].rolling(
+        period,
+        min_periods=period
+    ).max()
+
+    denominator = (
+        highest_high - lowest_low
+    ).replace(0, np.nan)
+
+    k = (
+        100
+        * (df["Close"] - lowest_low)
+        / denominator
     )
 
-    (
-        data["MACD"],
-        data["MACD_SIGNAL"],
-        data["MACD_HIST"]
-    ) = calculate_macd(
-        data["Close"]
-    )
+    d = k.rolling(
+        smooth,
+        min_periods=smooth
+    ).mean()
 
-    data["ATR"] = calculate_atr(data)
-
-    data["ADX"] = calculate_adx(data)
-
-    data["BB_MIDDLE"] = (
-        data["Close"].rolling(20).mean()
-    )
-
-    data["BB_STD"] = (
-        data["Close"].rolling(20).std()
-    )
-
-    data["BB_UPPER"] = (
-        data["BB_MIDDLE"] +
-        2 * data["BB_STD"]
-    )
-
-    data["BB_LOWER"] = (
-        data["BB_MIDDLE"] -
-        2 * data["BB_STD"]
-    )
-
-    return data
-
-
-# ============================================================
-# TELECHARGEMENT
-# ============================================================
-
-def download_market_data(
-    ticker,
-    timeframe
-):
-
-    settings = TIMEFRAMES[timeframe]
-
-    try:
-
-        data = yf.download(
-            ticker,
-            period=settings["period"],
-            interval=settings["interval"],
-            progress=False,
-            auto_adjust=False
-        )
-
-        if data.empty:
-            return pd.DataFrame()
-
-        if isinstance(
-            data.columns,
-            pd.MultiIndex
-        ):
-            data.columns = (
-                data.columns
-                .get_level_values(0)
-            )
-
-        required = [
-            "Open",
-            "High",
-            "Low",
-            "Close"
-        ]
-
-        data = data.dropna(
-            subset=required
-        )
-
-        # H4 construit à partir du H1
-        if timeframe == "H4":
-
-            data = data.resample(
-                "4h"
-            ).agg(
-                {
-                    "Open": "first",
-                    "High": "max",
-                    "Low": "min",
-                    "Close": "last"
-                }
-            )
-
-            data = data.dropna()
-
-        return data
-
-    except Exception:
-
-        return pd.DataFrame()
+    return k, d
 
 
 # ============================================================
 # STRUCTURE DU MARCHÉ
 # ============================================================
 
-def market_structure(data):
+def detect_swings(df, lookback=3):
+    """Détecte des swing highs et swing lows simples."""
 
-    if len(data) < 20:
+    data = df.copy()
 
-        return {
-            "structure": "Indéterminée",
-            "bos": "Non confirmé",
-            "support": np.nan,
-            "resistance": np.nan
-        }
+    data["Swing_High"] = False
+    data["Swing_Low"] = False
 
-    recent = data.tail(20)
+    if len(data) < (lookback * 2 + 1):
+        return data
 
-    support = float(
-        recent["Low"].min()
-    )
+    highs = data["High"].values
+    lows = data["Low"].values
 
-    resistance = float(
-        recent["High"].max()
-    )
+    for i in range(lookback, len(data) - lookback):
 
-    current_price = float(
-        data["Close"].iloc[-1]
-    )
+        current_high = highs[i]
+        current_low = lows[i]
 
-    previous_price = float(
-        data["Close"].iloc[-5]
-    )
+        left_highs = highs[
+            i - lookback:i
+        ]
 
-    if (
-        current_price > previous_price
-        and current_price > data["EMA20"].iloc[-1]
-    ):
+        right_highs = highs[
+            i + 1:i + lookback + 1
+        ]
 
-        structure = "Haussière"
+        left_lows = lows[
+            i - lookback:i
+        ]
 
-    elif (
-        current_price < previous_price
-        and current_price < data["EMA20"].iloc[-1]
-    ):
+        right_lows = lows[
+            i + 1:i + lookback + 1
+        ]
 
-        structure = "Baissière"
+        if (
+            current_high > left_highs.max()
+            and current_high > right_highs.max()
+        ):
+            data.iloc[
+                i,
+                data.columns.get_loc("Swing_High")
+            ] = True
 
-    else:
+        if (
+            current_low < left_lows.min()
+            and current_low < right_lows.min()
+        ):
+            data.iloc[
+                i,
+                data.columns.get_loc("Swing_Low")
+            ] = True
 
-        structure = "Neutre"
+    return data
 
-    previous_resistance = float(
-        data["High"].tail(10).max()
-    )
 
-    previous_support = float(
-        data["Low"].tail(10).min()
-    )
+def classify_structure(df):
+    """
+    Classe une structure simplifiée :
+    HH, HL, LH, LL.
+    """
 
-    if current_price > previous_resistance:
+    data = detect_swings(df)
 
-        bos = "BOS haussier potentiel"
+    swing_highs = data[
+        data["Swing_High"]
+    ]
 
-    elif current_price < previous_support:
+    swing_lows = data[
+        data["Swing_Low"]
+    ]
 
-        bos = "BOS baissier potentiel"
+    high_labels = []
+    low_labels = []
 
-    else:
+    previous_high = None
+    previous_low = None
 
-        bos = "Pas de BOS clair"
+    for idx, row in swing_highs.iterrows():
 
-    return {
-        "structure": structure,
-        "bos": bos,
-        "support": support,
-        "resistance": resistance
-    }
+        current = row["High"]
+
+        if previous_high is None:
+            label = "H"
+        elif current > previous_high:
+            label = "HH"
+        else:
+            label = "LH"
+
+        high_labels.append(
+            (idx, label, current)
+        )
+
+        previous_high = current
+
+    for idx, row in swing_lows.iterrows():
+
+        current = row["Low"]
+
+        if previous_low is None:
+            label = "L"
+        elif current > previous_low:
+            label = "HL"
+        else:
+            label = "LL"
+
+        low_labels.append(
+            (idx, label, current)
+        )
+
+        previous_low = current
+
+    structure = "NEUTRE"
+
+    recent_highs = high_labels[-2:]
+    recent_lows = low_labels[-2:]
+
+    if len(recent_highs) >= 2 and len(recent_lows) >= 2:
+
+        high1 = recent_highs[-2][1]
+        high2 = recent_highs[-1][1]
+
+        low1 = recent_lows[-2][1]
+        low2 = recent_lows[-1][1]
+
+        if (
+            high2 == "HH"
+            and low2 == "HL"
+        ):
+            structure = "HAUSSIÈRE"
+
+        elif (
+            high2 == "LH"
+            and low2 == "LL"
+        ):
+            structure = "BAISSIÈRE"
+
+    return data, high_labels, low_labels, structure
+
+
+def detect_bos(df):
+    """
+    Détection simplifiée d'un potentiel Break of Structure.
+    """
+
+    if len(df) < 20:
+        return "AUCUN"
+
+    data = detect_swings(df)
+
+    swing_highs = data[
+        data["Swing_High"]
+    ]
+
+    swing_lows = data[
+        data["Swing_Low"]
+    ]
+
+    close = data["Close"].iloc[-1]
+
+    bos = "AUCUN"
+
+    if not swing_highs.empty:
+        recent_high = swing_highs["High"].iloc[-1]
+
+        if close > recent_high:
+            bos = "BOS HAUSSIER"
+
+    if not swing_lows.empty:
+        recent_low = swing_lows["Low"].iloc[-1]
+
+        if close < recent_low:
+            bos = "BOS BAISSIER"
+
+    return bos
+
+
+# ============================================================
+# SUPPORT / RÉSISTANCE
+# ============================================================
+
+def calculate_support_resistance(df, window=50):
+    data = df.tail(window)
+
+    if data.empty:
+        return np.nan, np.nan
+
+    support = data["Low"].min()
+    resistance = data["High"].max()
+
+    return support, resistance
 
 
 # ============================================================
 # FIBONACCI
 # ============================================================
 
-def calculate_fibonacci(data):
+def calculate_fibonacci(df):
+    """
+    Calcule les principaux niveaux Fibonacci
+    à partir du dernier swing significatif.
+    """
 
-    recent = data.tail(100)
+    data = detect_swings(df)
 
-    swing_high = float(
-        recent["High"].max()
-    )
+    swing_highs = data[
+        data["Swing_High"]
+    ]
 
-    swing_low = float(
-        recent["Low"].min()
-    )
+    swing_lows = data[
+        data["Swing_Low"]
+    ]
 
-    difference = swing_high - swing_low
-
-    if difference <= 0:
-
+    if swing_highs.empty or swing_lows.empty:
         return {}
 
-    levels = {
+    last_high_idx = swing_highs.index[-1]
+    last_low_idx = swing_lows.index[-1]
 
-        "23.6%": swing_high - (
-            difference * 0.236
-        ),
+    high = swing_highs["High"].iloc[-1]
+    low = swing_lows["Low"].iloc[-1]
 
-        "38.2%": swing_high - (
-            difference * 0.382
-        ),
+    if high <= low:
+        return {}
 
-        "50.0%": swing_high - (
-            difference * 0.500
-        ),
+    levels = {}
 
-        "61.8%": swing_high - (
-            difference * 0.618
-        ),
+    diff = high - low
 
-        "78.6%": swing_high - (
-            difference * 0.786
-        ),
+    levels["23.6%"] = high - diff * 0.236
+    levels["38.2%"] = high - diff * 0.382
+    levels["50.0%"] = high - diff * 0.500
+    levels["61.8%"] = high - diff * 0.618
+    levels["78.6%"] = high - diff * 0.786
 
-        "127.2%": swing_high + (
-            difference * 0.272
-        ),
+    levels["127.2%"] = high + diff * 0.272
+    levels["161.8%"] = high + diff * 0.618
 
-        "161.8%": swing_high + (
-            difference * 0.618
-        )
-    }
+    levels["_high"] = high
+    levels["_low"] = low
 
     return levels
+
+
+# ============================================================
+# CALCUL DES INDICATEURS
+# ============================================================
+
+def add_indicators(df):
+    data = df.copy()
+
+    data["EMA20"] = ema(
+        data["Close"],
+        20
+    )
+
+    data["EMA50"] = ema(
+        data["Close"],
+        50
+    )
+
+    data["SMA200"] = sma(
+        data["Close"],
+        200
+    )
+
+    data["RSI"] = calculate_rsi(
+        data["Close"],
+        14
+    )
+
+    (
+        data["MACD"],
+        data["MACD_Signal"],
+        data["MACD_Hist"]
+    ) = calculate_macd(
+        data["Close"]
+    )
+
+    (
+        data["ADX"],
+        data["DI_Plus"],
+        data["DI_Minus"]
+    ) = calculate_adx(
+        data,
+        14
+    )
+
+    data["ATR"] = calculate_atr(
+        data,
+        14
+    )
+
+    (
+        data["BB_Middle"],
+        data["BB_Upper"],
+        data["BB_Lower"]
+    ) = calculate_bollinger(
+        data["Close"],
+        20,
+        2
+    )
+
+    (
+        data["Stoch_K"],
+        data["Stoch_D"]
+    ) = calculate_stochastic(
+        data,
+        14,
+        3
+    )
+
+    return data
 
 
 # ============================================================
 # ANALYSE D'UN TIMEFRAME
 # ============================================================
 
-def analyze_timeframe(data):
-
-    if data.empty or len(data) < 30:
-
+def analyze_timeframe(df):
+    if df.empty:
         return None
 
-    data = calculate_indicators(data)
+    data = add_indicators(df)
 
-    latest = data.iloc[-1]
+    if len(data) < 30:
+        return None
 
-    price = float(
-        latest["Close"]
+    (
+        structure_data,
+        high_labels,
+        low_labels,
+        structure
+    ) = classify_structure(data)
+
+    bos = detect_bos(data)
+
+    support, resistance = calculate_support_resistance(
+        data,
+        50
     )
+
+    fibonacci = calculate_fibonacci(data)
+
+    last = data.iloc[-1]
+
+    price = float(last["Close"])
 
     score = 0
-
     reasons = []
 
+    # --------------------------------------------------------
     # EMA20 / EMA50
-    if latest["EMA20"] > latest["EMA50"]:
+    # --------------------------------------------------------
 
-        score += 1
+    if pd.notna(last["EMA20"]) and pd.notna(last["EMA50"]):
 
-        reasons.append(
-            "EMA20 > EMA50"
-        )
+        if last["EMA20"] > last["EMA50"]:
+            score += 1
+            reasons.append("EMA20 > EMA50")
 
-    else:
+        elif last["EMA20"] < last["EMA50"]:
+            score -= 1
+            reasons.append("EMA20 < EMA50")
 
-        score -= 1
-
-        reasons.append(
-            "EMA20 < EMA50"
-        )
-
+    # --------------------------------------------------------
     # SMA200
-    if not pd.isna(
-        latest["SMA200"]
-    ):
+    # --------------------------------------------------------
 
-        if price > latest["SMA200"]:
+    if pd.notna(last["SMA200"]):
 
+        if price > last["SMA200"]:
             score += 1
+            reasons.append("Prix au-dessus SMA200")
 
-            reasons.append(
-                "Prix > SMA200"
-            )
-
-        else:
-
+        elif price < last["SMA200"]:
             score -= 1
+            reasons.append("Prix sous SMA200")
 
-            reasons.append(
-                "Prix < SMA200"
-            )
-
+    # --------------------------------------------------------
     # RSI
-    rsi = latest["RSI"]
+    # --------------------------------------------------------
 
-    if not pd.isna(rsi):
+    if pd.notna(last["RSI"]):
 
-        if rsi > 55:
+        rsi = float(last["RSI"])
 
+        if 50 <= rsi <= 70:
             score += 1
+            reasons.append("RSI favorable aux acheteurs")
 
-            reasons.append(
-                "RSI haussier"
-            )
-
-        elif rsi < 45:
-
+        elif 30 <= rsi < 50:
             score -= 1
+            reasons.append("RSI favorable aux vendeurs")
 
-            reasons.append(
-                "RSI baissier"
-            )
+        elif rsi > 70:
+            reasons.append("RSI en zone élevée")
 
-        else:
+        elif rsi < 30:
+            reasons.append("RSI en zone basse")
 
-            reasons.append(
-                "RSI neutre"
-            )
-
+    # --------------------------------------------------------
     # MACD
-    if not pd.isna(
-        latest["MACD"]
+    # --------------------------------------------------------
+
+    if (
+        pd.notna(last["MACD"])
+        and pd.notna(last["MACD_Signal"])
     ):
 
-        if latest["MACD"] > latest["MACD_SIGNAL"]:
-
+        if last["MACD"] > last["MACD_Signal"]:
             score += 1
+            reasons.append("MACD haussier")
 
-            reasons.append(
-                "MACD haussier"
-            )
-
-        else:
-
+        elif last["MACD"] < last["MACD_Signal"]:
             score -= 1
+            reasons.append("MACD baissier")
 
-            reasons.append(
-                "MACD baissier"
-            )
-
+    # --------------------------------------------------------
     # ADX
-    adx = latest["ADX"]
+    # --------------------------------------------------------
 
-    if not pd.isna(adx):
+    if pd.notna(last["ADX"]):
+
+        adx = float(last["ADX"])
 
         if adx >= 25:
+            reasons.append("ADX confirme une tendance")
 
-            reasons.append(
-                f"ADX fort ({adx:.1f})"
-            )
+            if (
+                pd.notna(last["DI_Plus"])
+                and pd.notna(last["DI_Minus"])
+            ):
+
+                if last["DI_Plus"] > last["DI_Minus"]:
+                    score += 1
+                    reasons.append("DI+ > DI-")
+
+                elif last["DI_Minus"] > last["DI_Plus"]:
+                    score -= 1
+                    reasons.append("DI- > DI+")
 
         else:
+            reasons.append("ADX faible : marché potentiellement en range")
 
-            reasons.append(
-                f"ADX faible ({adx:.1f})"
-            )
+    # --------------------------------------------------------
+    # STOCHASTIC
+    # --------------------------------------------------------
 
-    structure = market_structure(
-        data
-    )
+    if (
+        pd.notna(last["Stoch_K"])
+        and pd.notna(last["Stoch_D"])
+    ):
 
-    if structure["structure"] == "Haussière":
+        if (
+            last["Stoch_K"] > last["Stoch_D"]
+            and last["Stoch_K"] < 80
+        ):
+            score += 1
+            reasons.append("Stochastic haussier")
 
-        score += 1
+        elif (
+            last["Stoch_K"] < last["Stoch_D"]
+            and last["Stoch_K"] > 20
+        ):
+            score -= 1
+            reasons.append("Stochastic baissier")
 
-    elif structure["structure"] == "Baissière":
+    # --------------------------------------------------------
+    # STRUCTURE
+    # --------------------------------------------------------
 
-        score -= 1
+    if structure == "HAUSSIÈRE":
+        score += 2
+        reasons.append("Structure haussière")
+
+    elif structure == "BAISSIÈRE":
+        score -= 2
+        reasons.append("Structure baissière")
+
+    # --------------------------------------------------------
+    # BOS
+    # --------------------------------------------------------
+
+    if bos == "BOS HAUSSIER":
+        score += 2
+        reasons.append("BOS haussier potentiel")
+
+    elif bos == "BOS BAISSIER":
+        score -= 2
+        reasons.append("BOS baissier potentiel")
+
+    # --------------------------------------------------------
+    # BANDES DE BOLLINGER
+    # --------------------------------------------------------
+
+    if (
+        pd.notna(last["BB_Upper"])
+        and pd.notna(last["BB_Lower"])
+    ):
+
+        if price > last["BB_Middle"]:
+            score += 0.5
+
+        elif price < last["BB_Middle"]:
+            score -= 0.5
+
+    # --------------------------------------------------------
+    # DIRECTION
+    # --------------------------------------------------------
+
+    if score >= 4:
+        direction = "ACHAT"
+
+    elif score <= -4:
+        direction = "VENTE"
+
+    else:
+        direction = "NEUTRE"
 
     return {
         "data": data,
         "price": price,
-        "score": score,
-        "rsi": rsi,
-        "adx": adx,
-        "structure": structure,
-        "reasons": reasons
-    }
-
-
-# ============================================================
-# ANALYSE MULTI-TIMEFRAME
-# ============================================================
-
-if st.button(
-    "🔍 ANALYSER LE MARCHÉ",
-    use_container_width=True
-):
-
-    with st.spinner(
-        "Analyse D1 → H4 → H1 → M15 → M5..."
-    ):
-
-        analyses = {}
-
-        for tf in [
-            "D1",
-            "H4",
-            "H1",
-            "M15",
-            "M5"
-        ]:
-
-            data = download_market_data(
-                ticker,
-                tf
-            )
-
-            result = analyze_timeframe(
-                data
-            )
-
-            if result is not None:
-
-                analyses[tf] = result
-
-        # ====================================================
-        # VÉRIFICATION
-        # ====================================================
-
-        if not analyses:
-
-            st.error(
-                "❌ Impossible de récupérer les données du marché."
-            )
-
-            st.stop()
-
-        # ====================================================
-        # SCORE GLOBAL
-        # ====================================================
-
-        weights = {
-            "D1": 3,
-            "H4": 3,
-            "H1": 2,
-            "M15": 1,
-            "M5": 1
-        }
-
-        weighted_score = 0
-        total_weight = 0
-
-        for tf, result in analyses.items():
-
-            weighted_score += (
-                result["score"] *
-                weights[tf]
-            )
-
-            total_weight += weights[tf]
-
-        # ====================================================
-        # DÉCISION
-        # ====================================================
-
-        if weighted_score >= 8:
-
-            signal = "ACHAT"
-            signal_class = "signal-buy"
-
-        elif weighted_score <= -8:
-
-            signal = "VENTE"
-            signal_class = "signal-sell"
-
-        elif abs(weighted_score) >= 3:
-
-            signal = "ATTENDRE"
-            signal_class = "signal-wait"
-
-        else:
-
-            signal = "AUCUN SETUP"
-            signal_class = "signal-none"
-
-        # ====================================================
-        # AFFICHAGE GLOBAL
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            f"🎯 Décision globale : {asset}"
-        )
-
-        c1, c2, c3 = st.columns(3)
-
-        current_price = list(
-            analyses.values()
-        )[-1]["price"]
-
-        c1.metric(
-            "Prix",
-            f"{current_price:.5f}"
-        )
-
-        c2.metric(
-            "Score pondéré",
-            f"{weighted_score:+d}"
-        )
-
-        c3.metric(
-            "Timeframes analysés",
-            str(len(analyses))
-        )
-
-        st.markdown(
-            f'<div class="{signal_class}">'
-            f'{signal}'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        # ====================================================
-        # TABLEAU TIMEFRAMES
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            "📊 Analyse multi-timeframe"
-        )
-
-        rows = []
-
-        for tf in [
-            "D1",
-            "H4",
-            "H1",
-            "M15",
-            "M5"
-        ]:
-
-            if tf not in analyses:
-                continue
-
-            result = analyses[tf]
-
-            rows.append(
-                {
-                    "Timeframe": tf,
-                    "Score": result["score"],
-                    "RSI": (
-                        round(
-                            float(result["rsi"]),
-                            2
-                        )
-                        if not pd.isna(
-                            result["rsi"]
-                        )
-                        else "N/A"
-                    ),
-                    "ADX": (
-                        round(
-                            float(result["adx"]),
-                            2
-                        )
-                        if not pd.isna(
-                            result["adx"]
-                        )
-                        else "N/A"
-                    ),
-                    "Structure":
-                        result[
-                            "structure"
-                        ]["structure"],
-                    "BOS":
-                        result[
-                            "structure"
-                        ]["bos"]
-                }
-            )
-
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # ====================================================
-        # GRAPHIQUE
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            f"📈 Graphique {chart_tf}"
-        )
-
-        if chart_tf in analyses:
-
-            chart_data = analyses[
-                chart_tf
-            ]["data"]
-
-            chart = chart_data[
-                [
-                    "Close",
-                    "EMA20",
-                    "EMA50",
-                    "SMA200"
-                ]
-            ].dropna()
-
-            st.line_chart(
-                chart
-            )
-
-        # ====================================================
-        # STRUCTURE
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            "🧱 Structure du marché"
-        )
-
-        selected = analyses.get(
-            chart_tf
-        )
-
-        if selected:
-
-            structure = selected[
-                "structure"
-            ]
-
-            s1, s2, s3 = st.columns(3)
-
-            s1.metric(
-                "Structure",
-                structure["structure"]
-            )
-
-            s2.metric(
-                "Support",
-                (
-                    f'{structure["support"]:.5f}'
-                    if not pd.isna(
-                        structure["support"]
-                    )
-                    else "N/A"
-                )
-            )
-
-            s3.metric(
-                "Résistance",
-                (
-                    f'{structure["resistance"]:.5f}'
-                    if not pd.isna(
-                        structure["resistance"]
-                    )
-                    else "N/A"
-                )
-            )
-
-            st.info(
-                f'BOS : {structure["bos"]}'
-            )
-
-        # ====================================================
-        # FIBONACCI
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            "📐 Fibonacci"
-        )
-
-        if selected:
-
-            fib = calculate_fibonacci(
-                selected["data"]
-            )
-
-            if fib:
-
-                fib_df = pd.DataFrame(
-                    {
-                        "Niveau": list(
-                            fib.keys()
-                        ),
-                        "Prix": [
-                            round(
-                                value,
-                                5
-                            )
-                            for value in fib.values()
-                        ]
-                    }
-                )
-
-                st.dataframe(
-                    fib_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                st.caption(
-                    "Les niveaux de Fibonacci servent "
-                    "uniquement de zones de confluence."
-                )
-
-        # ====================================================
-        # EXPLICATION
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            "🧠 P
+        "score": scor
