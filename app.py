@@ -950,7 +950,9 @@ def analyze_timeframe(df):
     else:
         direction = "NEUTRE"
 
-    return {
+        return {
         "data": data,
         "price": price,
-        "score": scor
+        "score": score,
+        "direction": direction,
+    }
