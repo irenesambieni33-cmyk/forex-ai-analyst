@@ -956,3 +956,610 @@ def analyze_timeframe(df):
         "score": score,
         "direction": direction,
     }
+# ============================================================
+# ANALYSE MULTI-TIMEFRAME
+# ============================================================
+
+def analyze_all_timeframes(symbol):
+
+    results = {}
+
+    for tf_name, config in TIMEFRAMES.items():
+
+        try:
+            df = download_data(
+                symbol,
+                config["interval"],
+                config["period"]
+            )
+
+            if tf_name == "H4":
+                df = resample_h4(df)
+
+            if df is None or df.empty:
+                results[tf_name] = None
+                continue
+
+            results[tf_name] = analyze_timeframe(df)
+
+        except Exception as e:
+            results[tf_name] = None
+
+    return results
+
+
+# ============================================================
+# SCORE GLOBAL
+# ============================================================
+
+def calculate_global_score(results):
+
+    weights = {
+        "D1": 3,
+        "H4": 3,
+        "H1": 2,
+        "M15": 1,
+        "M5": 1,
+    }
+
+    total_score = 0
+    total_weight = 0
+
+    for tf, weight in weights.items():
+
+        result = results.get(tf)
+
+        if result is None:
+            continue
+
+        total_score += result["score"] * weight
+        total_weight += weight
+
+    if total_weight == 0:
+        return 0
+
+    return total_score / total_weight
+
+
+# ============================================================
+# DECISION FINALE
+# ============================================================
+
+def get_global_decision(results, global_score):
+
+    d1 = results.get("D1")
+    h4 = results.get("H4")
+    h1 = results.get("H1")
+    m15 = results.get("M15")
+    m5 = results.get("M5")
+
+    bullish = 0
+    bearish = 0
+
+    for result in [d1, h4, h1, m15, m5]:
+
+        if result is None:
+            continue
+
+        if result["direction"] == "ACHAT":
+            bullish += 1
+
+        elif result["direction"] == "VENTE":
+            bearish += 1
+
+    # Forte confirmation acheteuse
+    if (
+        d1 is not None
+        and h4 is not None
+        and h1 is not None
+        and d1["direction"] == "ACHAT"
+        and h4["direction"] == "ACHAT"
+        and h1["direction"] == "ACHAT"
+        and bullish >= 4
+        and global_score >= 2
+    ):
+        return "ACHAT"
+
+    # Forte confirmation vendeuse
+    if (
+        d1 is not None
+        and h4 is not None
+        and h1 is not None
+        and d1["direction"] == "VENTE"
+        and h4["direction"] == "VENTE"
+        and h1["direction"] == "VENTE"
+        and bearish >= 4
+        and global_score <= -2
+    ):
+        return "VENTE"
+
+    # Zone d'attente
+    if abs(global_score) >= 0.75:
+        return "ATTENDRE"
+
+    return "AUCUN SETUP"
+
+
+# ============================================================
+# NIVEAUX DE TRADING
+# ============================================================
+
+def calculate_trade_levels(result, decision):
+
+    if result is None:
+        return None
+
+    price = result["price"]
+    atr = result["data"]["ATR"].iloc[-1]
+
+    if pd.isna(atr) or atr <= 0:
+        return None
+
+    if decision == "ACHAT":
+
+        entry = price
+
+        sl = price - (atr * 1.5)
+
+        risk = entry - sl
+
+        tp1 = entry + (risk * 2)
+
+        tp2 = entry + (risk * 3)
+
+    elif decision == "VENTE":
+
+        entry = price
+
+        sl = price + (atr * 1.5)
+
+        risk = sl - entry
+
+        tp1 = entry - (risk * 2)
+
+        tp2 = entry - (risk * 3)
+
+    else:
+
+        return None
+
+    return {
+        "entry": entry,
+        "sl": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+    }
+
+
+# ============================================================
+# EXPLICATION
+# ============================================================
+
+def explain_decision(results, decision, global_score):
+
+    if decision == "ACHAT":
+
+        return (
+            f"Le scénario est haussier. Le score global est "
+            f"{global_score:.2f}. Les unités de temps principales "
+            f"confirment une pression acheteuse."
+        )
+
+    if decision == "VENTE":
+
+        return (
+            f"Le scénario est baissier. Le score global est "
+            f"{global_score:.2f}. Les unités de temps principales "
+            f"confirment une pression vendeuse."
+        )
+
+    if decision == "ATTENDRE":
+
+        return (
+            f"Le marché présente une orientation, mais la "
+            f"confirmation n'est pas suffisamment forte. "
+            f"Score global : {global_score:.2f}. "
+            f"Il est préférable d'attendre une meilleure configuration."
+        )
+
+    return (
+        "Les différentes unités de temps ne présentent pas "
+        "d'alignement suffisamment clair. Aucun setup propre "
+        "n'est actuellement identifié."
+    )
+
+
+# ============================================================
+# INTERFACE PRINCIPALE
+# ============================================================
+
+st.title("📊 Forex AI Analyst")
+
+st.caption(
+    "Analyse technique multi-timeframe • Aucun ordre automatique"
+)
+
+st.divider()
+
+# ------------------------------------------------------------
+# PARAMÈTRES
+# ------------------------------------------------------------
+
+col1, col2 = st.columns(2)
+
+with col1:
+
+    instrument = st.selectbox(
+        "💱 Instrument",
+        [
+            "EUR/USD",
+            "XAU/USD",
+        ]
+    )
+
+with col2:
+
+    st.info(
+        "L'analyse utilise D1 → H4 → H1 → M15 → M5."
+    )
+
+
+# ------------------------------------------------------------
+# BOUTON D'ANALYSE
+# ------------------------------------------------------------
+
+analyze_button = st.button(
+    "🔍 ANALYSER LE MARCHÉ",
+    use_container_width=True
+)
+
+
+# ============================================================
+# LANCEMENT DE L'ANALYSE
+# ============================================================
+
+if analyze_button:
+
+    symbol = INSTRUMENTS[instrument]
+
+    with st.spinner("📡 Récupération des données et analyse du marché..."):
+
+        results = analyze_all_timeframes(symbol)
+
+    global_score = calculate_global_score(results)
+
+    decision = get_global_decision(
+        results,
+        global_score
+    )
+
+    h1_result = results.get("H1")
+
+    trade_levels = calculate_trade_levels(
+        h1_result,
+        decision
+    )
+
+    # --------------------------------------------------------
+    # TITRE DU RÉSULTAT
+    # --------------------------------------------------------
+
+    st.divider()
+
+    st.subheader(
+        f"📊 Résultat de l'analyse : {instrument}"
+    )
+
+    # --------------------------------------------------------
+    # DÉCISION
+    # --------------------------------------------------------
+
+    if decision == "ACHAT":
+
+        st.success(
+            "🟢 ACHAT"
+        )
+
+    elif decision == "VENTE":
+
+        st.error(
+            "🔴 VENTE"
+        )
+
+    elif decision == "ATTENDRE":
+
+        st.warning(
+            "🟠 ATTENDRE"
+        )
+
+    else:
+
+        st.info(
+            "⚪ AUCUN SETUP"
+        )
+
+    # --------------------------------------------------------
+    # SCORE
+    # --------------------------------------------------------
+
+    score_col1, score_col2 = st.columns(2)
+
+    with score_col1:
+
+        st.metric(
+            "📊 Score global",
+            f"{global_score:.2f}"
+        )
+
+    with score_col2:
+
+        st.metric(
+            "🎯 Décision",
+            decision
+        )
+
+    # ========================================================
+    # TABLEAU MULTI-TIMEFRAME
+    # ========================================================
+
+    st.subheader(
+        "⏱️ Analyse multi-timeframe"
+    )
+
+    table_data = []
+
+    for tf in ["D1", "H4", "H1", "M15", "M5"]:
+
+        result = results.get(tf)
+
+        if result is None:
+
+            table_data.append({
+                "Timeframe": tf,
+                "Prix": "N/D",
+                "Score": "N/D",
+                "Direction": "Données indisponibles",
+            })
+
+        else:
+
+            table_data.append({
+                "Timeframe": tf,
+                "Prix": round(result["price"], 5),
+                "Score": round(result["score"], 2),
+                "Direction": result["direction"],
+            })
+
+    st.dataframe(
+        pd.DataFrame(table_data),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # ========================================================
+    # NIVEAUX
+    # ========================================================
+
+    st.subheader(
+        "🎯 Niveaux théoriques"
+    )
+
+    if trade_levels is not None:
+
+        level1, level2, level3, level4 = st.columns(4)
+
+        with level1:
+            st.metric(
+                "Entrée",
+                f"{trade_levels['entry']:.5f}"
+            )
+
+        with level2:
+            st.metric(
+                "Stop Loss",
+                f"{trade_levels['sl']:.5f}"
+            )
+
+        with level3:
+            st.metric(
+                "TP1",
+                f"{trade_levels['tp1']:.5f}"
+            )
+
+        with level4:
+            st.metric(
+                "TP2",
+                f"{trade_levels['tp2']:.5f}"
+            )
+
+        st.caption(
+            "⚠️ Ces niveaux sont théoriques et ne constituent pas "
+            "un conseil financier."
+        )
+
+    else:
+
+        st.info(
+            "Aucun niveau Entry/SL/TP n'est proposé tant qu'un "
+            "setup suffisamment clair n'est pas confirmé."
+        )
+
+    # ========================================================
+    # SUPPORT / RÉSISTANCE
+    # ========================================================
+
+    if h1_result is not None:
+
+        st.subheader(
+            "🧱 Support & Résistance"
+        )
+
+        support = h1_result.get("support")
+        resistance = h1_result.get("resistance")
+
+        sr1, sr2 = st.columns(2)
+
+        with sr1:
+
+            if support is not None:
+                st.metric(
+                    "Support",
+                    f"{support:.5f}"
+                )
+            else:
+                st.metric(
+                    "Support",
+                    "N/D"
+                )
+
+        with sr2:
+
+            if resistance is not None:
+                st.metric(
+                    "Résistance",
+                    f"{resistance:.5f}"
+                )
+            else:
+                st.metric(
+                    "Résistance",
+                    "N/D"
+                )
+
+    # ========================================================
+    # FIBONACCI
+    # ========================================================
+
+    if h1_result is not None:
+
+        fib = h1_result.get("fibonacci")
+
+        if fib:
+
+            st.subheader(
+                "📐 Fibonacci"
+            )
+
+            fib_table = []
+
+            for level, value in fib.items():
+
+                fib_table.append({
+                    "Niveau": level,
+                    "Prix": round(value, 5)
+                })
+
+            st.dataframe(
+                pd.DataFrame(fib_table),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                "Les niveaux de Fibonacci servent uniquement "
+                "de zones de confluence."
+            )
+
+    # ========================================================
+    # EXPLICATION
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "🧠 Pourquoi cette décision ?"
+    )
+
+    explanation = explain_decision(
+        results,
+        decision,
+        global_score
+    )
+
+    st.write(
+        explanation
+    )
+
+    # ========================================================
+    # GRAPHIQUE H1
+    # ========================================================
+
+    if h1_result is not None:
+
+        st.subheader(
+            "📈 Graphique H1"
+        )
+
+        chart_data = h1_result["data"][
+            ["Close", "EMA20", "EMA50", "SMA200"]
+        ].dropna()
+
+        st.line_chart(
+            chart_data
+        )
+
+    # ========================================================
+    # DERNIÈRES DONNÉES
+    # ========================================================
+
+    if h1_result is not None:
+
+        st.subheader(
+            "📋 Dernières données H1"
+        )
+
+        latest_data = h1_result["data"].tail(10).copy()
+
+        st.dataframe(
+            latest_data,
+            use_container_width=True
+        )
+
+    # ========================================================
+    # AVERTISSEMENT
+    # ========================================================
+
+    st.divider()
+
+    st.warning(
+        "⚠️ Forex AI Analyst fournit une analyse technique "
+        "à titre informatif. Aucun ordre n'est envoyé "
+        "automatiquement à un broker."
+    )
+
+else:
+
+    # ========================================================
+    # ÉCRAN D'ACCUEIL
+    # ========================================================
+
+    st.info(
+        "👆 Sélectionne un instrument puis appuie sur "
+        "« 🔍 ANALYSER LE MARCHÉ » pour lancer l'analyse."
+    )
+
+    st.markdown(
+        """
+### 🔎 Ce que l'application analyse
+
+- 📈 Tendance générale
+- 📊 EMA20 / EMA50 / SMA200
+- RSI
+- MACD
+- ADX
+- ATR
+- Bollinger Bands
+- Stochastique
+- 🧱 Supports et résistances
+- 📐 Fibonacci
+- 🔄 Structure du marché
+- ⏱️ D1 → H4 → H1 → M15 → M5
+- 🎯 Entry / SL / TP théoriques
+
+### 🛡️ Principe
+
+L'application **ne passe aucun ordre automatiquement**.
+
+Elle cherche une configuration suffisamment cohérente et peut
+également recommander **ATTENDRE** ou **AUCUN SETUP**.
+        """
+    )
